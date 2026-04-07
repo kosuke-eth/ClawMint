@@ -1,58 +1,45 @@
-import { createClient } from "@/lib/supabase/server"
 import { NextResponse } from "next/server"
+import { createWalletIfMissing, getRecentTransactions } from "@/lib/tidb"
 
 export async function GET() {
   try {
-    const supabase = await createClient()
-    
-    // Get demo wallet
-    const { data: wallet, error: walletError } = await supabase
-      .from("wallets")
-      .select("*")
-      .eq("user_id", "demo-user")
-      .single()
+    const userId = "demo-user"
+    const wallet = await createWalletIfMissing(userId)
 
-    if (walletError) {
-      console.error("Wallet error:", walletError)
+    if (!wallet) {
       return NextResponse.json(
-        { error: "Failed to fetch wallet data" },
-        { status: 500 }
+        { success: false, message: "Wallet not found" },
+        { status: 404 }
       )
     }
 
-    // Get transactions
-    const { data: transactions, error: txError } = await supabase
-      .from("transactions")
-      .select("*")
-      .eq("wallet_id", wallet?.id)
-      .order("created_at", { ascending: false })
-      .limit(20)
+    const transactions = await getRecentTransactions(wallet.id, 20)
 
-    if (txError) {
-      console.error("Transaction error:", txError)
-    }
-
-    // Calculate spent and blocked amounts
     const spent = transactions
-      ?.filter((t) => t.status === "success")
-      .reduce((sum, t) => sum + Number(t.amount), 0) || 0
+      .filter((tx) => tx.status === "success" && tx.amount > 0)
+      .reduce((sum, tx) => sum + Number(tx.amount), 0)
 
-    const blocked = transactions
-      ?.filter((t) => t.status === "rejected")
-      .reduce((sum, t) => sum + Number(t.amount), 0) || 0
+    const blocked = transactions.filter((tx) => tx.status === "rejected").length
 
     return NextResponse.json({
+      success: true,
       wallet: {
-        balance: Number(wallet?.balance) || 0,
+        id: wallet.id,
+        user_id: wallet.user_id,
+        balance: Number(wallet.balance),
         spent,
         blocked,
       },
-      transactions: transactions || [],
+      transactions,
     })
   } catch (error) {
     console.error("Data fetch error:", error)
+
     return NextResponse.json(
-      { error: "An error occurred while fetching data" },
+      {
+        success: false,
+        message: "An error occurred while fetching wallet data",
+      },
       { status: 500 }
     )
   }
